@@ -75,7 +75,16 @@ pub async fn resolve_stellar_node_infra(
 
         let (hardware_generation, feature_labels) = match kubernetes_node.as_deref() {
             Some(node_name) => match nodes_api.get(node_name).await {
-                Ok(kube_node) => hardware_details_from_node(&kube_node),
+                Ok(kube_node) => {
+                    let labels = kube_node.metadata.labels.as_ref().cloned().unwrap_or_default();
+                    let feature_labels = labels
+                        .into_iter()
+                        .filter(|(key, _)| key.starts_with(FEATURE_PREFIX))
+                        .collect::<BTreeMap<_, _>>();
+
+                    let generation = infer_hardware_generation(&feature_labels);
+                    (generation, feature_labels)
+                }
                 Err(kube::Error::Api(err)) if err.code == 404 => {
                     ("unknown".to_string(), BTreeMap::new())
                 }
@@ -95,17 +104,6 @@ pub async fn resolve_stellar_node_infra(
     Ok(InfraSummary { assignments })
 }
 
-pub fn hardware_details_from_node(node: &Node) -> (String, BTreeMap<String, String>) {
-    let labels = node.metadata.labels.as_ref().cloned().unwrap_or_default();
-    let feature_labels = labels
-        .into_iter()
-        .filter(|(key, _)| key.starts_with(FEATURE_PREFIX))
-        .collect::<BTreeMap<_, _>>();
-
-    let generation = infer_hardware_generation(&feature_labels);
-    (generation, feature_labels)
-}
-
 pub fn infer_hardware_generation(feature_labels: &BTreeMap<String, String>) -> String {
     // NFD's built-in CPU source exposes vendor/family/model labels consistently, but not a
     // universal "generation" label. We prefer an explicit generation label when present and
@@ -120,7 +118,7 @@ pub fn infer_hardware_generation(feature_labels: &BTreeMap<String, String>) -> S
                 || key_lower.contains("microarchitecture"))
             && !value.trim().is_empty()
         {
-            return sanitize_generation(value);
+            return normalize_generation_string(value);
         }
 
         for candidate in [
@@ -143,7 +141,7 @@ pub fn infer_hardware_generation(feature_labels: &BTreeMap<String, String>) -> S
             "zen3",
         ] {
             if key_lower.contains(candidate) || value_lower.contains(candidate) {
-                return sanitize_generation(candidate);
+                return normalize_generation_string(candidate);
             }
         }
     }
@@ -163,11 +161,15 @@ pub fn infer_hardware_generation(feature_labels: &BTreeMap<String, String>) -> S
         (Some("arm") | Some("0x41"), _, _) => "ARM (generation unknown)".to_string(),
         _ => match (vendor, family, model) {
             (Some(vendor), Some(family), Some(model)) => {
+                let normalized_vendor = match vendor.as_str() {
+                    "genuineintel" => "Intel",
+                    "authenticamd" => "AMD",
+                    "arm" | "0x41" => "ARM",
+                    _ => vendor.as_str(),
+                };
                 format!(
                     "{} family {} model {}",
-                    normalize_vendor(&vendor),
-                    family,
-                    model
+                    normalized_vendor, family, model
                 )
             }
             _ => "unknown".to_string(),
@@ -175,7 +177,9 @@ pub fn infer_hardware_generation(feature_labels: &BTreeMap<String, String>) -> S
     }
 }
 
-fn sanitize_generation(value: &str) -> String {
+/// Normalise a raw generation string: expand known shorthand tokens and apply
+/// title-case formatting.  Used only within `infer_hardware_generation`.
+fn normalize_generation_string(value: &str) -> String {
     let cleaned = value
         .replace("graviton4", "Graviton 4")
         .replace("graviton3", "Graviton 3")
@@ -186,20 +190,9 @@ fn sanitize_generation(value: &str) -> String {
         .replace("zen4", "Zen 4")
         .replace("zen3", "Zen 3");
 
-    title_case(cleaned.trim())
-}
-
-fn normalize_vendor(vendor: &str) -> &str {
-    match vendor {
-        "genuineintel" => "Intel",
-        "authenticamd" => "AMD",
-        "arm" | "0x41" => "ARM",
-        _ => vendor,
-    }
-}
-
-fn title_case(input: &str) -> String {
-    input
+    // Apply title-case: capitalise the first letter of each whitespace-separated word.
+    cleaned
+        .trim()
         .split_whitespace()
         .map(|word| {
             let mut chars = word.chars();

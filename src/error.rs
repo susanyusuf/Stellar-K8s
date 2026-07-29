@@ -43,14 +43,6 @@ pub enum Error {
         namespace: String,
     },
 
-    /// The `nodeType` provided in the spec is not recognized by this version of the operator.
-    #[error("[SK8S-007] Invalid node type: {0}")]
-    InvalidNodeType(String),
-
-    /// A required field for the specific node type (e.g., `seedSecretRef` for Validators) is missing.
-    #[error("[SK8S-008] Missing required field: {field} for node type {node_type}")]
-    MissingRequiredField { field: String, node_type: String },
-
     /// Failure during the background integrity check of a history archive bucket.
     #[error("[SK8S-009] Archive health check failed: {0}")]
     ArchiveHealthCheckError(String),
@@ -58,10 +50,6 @@ pub enum Error {
     /// Generic HTTP failure, often from querying the Stellar network's SCP status or Horizon health.
     #[error("[SK8S-010] HTTP request error: {0}")]
     HttpError(#[from] reqwest::Error),
-
-    /// An automated remediation action (e.g., restarting a stuck pod) failed to execute.
-    #[error("[SK8S-011] Remediation failed: {0}")]
-    RemediationError(String),
 
     /// Error returned by a WASM admission plugin during the validation phase.
     #[error("[SK8S-012] Plugin error: {0}")]
@@ -82,10 +70,6 @@ pub enum Error {
     /// File system interaction failure, usually related to local configuration or WASM module loading.
     #[error("[SK8S-016] I/O error: {0}")]
     IoError(#[from] std::io::Error),
-
-    /// Failure during database schema migrations or automated vacuum/pruning tasks.
-    #[error("[SK8S-017] Database maintenance error: {0}")]
-    MaintenanceError(String),
 
     /// Error from the SQLx driver during database interactions.
     #[error("[SK8S-018] SQL error: {0}")]
@@ -117,7 +101,7 @@ impl Error {
     pub fn is_retriable(&self) -> bool {
         matches!(
             self,
-            Error::KubeError(_) | Error::FinalizerError(_) | Error::RemediationError(_)
+            Error::KubeError(_) | Error::FinalizerError(_)
         )
     }
 
@@ -134,21 +118,15 @@ impl Error {
                 name,
                 namespace,
             } => format!("[SK8S-006] Resource not found: {kind}/{name} in namespace {namespace}"),
-            Error::InvalidNodeType(msg) => format!("[SK8S-007] Invalid node type: {msg}"),
-            Error::MissingRequiredField { field, node_type } => {
-                format!("[SK8S-008] Missing {field} for {node_type} node")
-            }
             Error::ArchiveHealthCheckError(msg) => {
                 format!("[SK8S-009] Archive health check failed: {msg}")
             }
             Error::HttpError(e) => format!("[SK8S-010] HTTP request failed: {e}"),
-            Error::RemediationError(msg) => format!("[SK8S-011] Remediation failed: {msg}"),
             Error::PluginError(msg) => format!("[SK8S-012] Plugin error: {msg}"),
             Error::WebhookError(msg) => format!("[SK8S-013] Webhook error: {msg}"),
             Error::NetworkError(msg) => format!("[SK8S-014] Network error: {msg}"),
             Error::CertificateError(e) => format!("[SK8S-015] Certificate error: {e}"),
             Error::IoError(e) => format!("[SK8S-016] I/O error: {e}"),
-            Error::MaintenanceError(msg) => format!("[SK8S-017] Database maintenance error: {msg}"),
             Error::SqlxError(e) => format!("[SK8S-018] SQL error: {e}"),
             Error::KubeconfigError(e) => format!("[SK8S-019] Kubeconfig error: {e}"),
             Error::ZipError(e) => format!("[SK8S-020] Zip error: {e}"),
@@ -294,29 +272,6 @@ mod tests {
             "[SK8S-006] Resource not found: Pod/test-pod in namespace default"
         );
 
-        let invalid_node_err = Error::InvalidNodeType("bad_type".to_string());
-        assert_eq!(
-            invalid_node_err.to_string(),
-            "[SK8S-007] Invalid node type: bad_type"
-        );
-        assert_eq!(
-            invalid_node_err.status_message(),
-            "[SK8S-007] Invalid node type: bad_type"
-        );
-
-        let missing_field_err = Error::MissingRequiredField {
-            field: "image".to_string(),
-            node_type: "core".to_string(),
-        };
-        assert_eq!(
-            missing_field_err.to_string(),
-            "[SK8S-008] Missing required field: image for node type core"
-        );
-        assert_eq!(
-            missing_field_err.status_message(),
-            "[SK8S-008] Missing image for core node"
-        );
-
         let archive_health_err = Error::ArchiveHealthCheckError("unreachable".to_string());
         assert_eq!(
             archive_health_err.to_string(),
@@ -325,16 +280,6 @@ mod tests {
         assert_eq!(
             archive_health_err.status_message(),
             "[SK8S-009] Archive health check failed: unreachable"
-        );
-
-        let remediation_err = Error::RemediationError("failed to restart".to_string());
-        assert_eq!(
-            remediation_err.to_string(),
-            "[SK8S-011] Remediation failed: failed to restart"
-        );
-        assert_eq!(
-            remediation_err.status_message(),
-            "[SK8S-011] Remediation failed: failed to restart"
         );
 
         let plugin_err = Error::PluginError("crash".to_string());
@@ -366,16 +311,6 @@ mod tests {
         assert_eq!(
             io_err.status_message(),
             "[SK8S-016] I/O error: file not found"
-        );
-
-        let maintenance_err = Error::MaintenanceError("db locked".to_string());
-        assert_eq!(
-            maintenance_err.to_string(),
-            "[SK8S-017] Database maintenance error: db locked"
-        );
-        assert_eq!(
-            maintenance_err.status_message(),
-            "[SK8S-017] Database maintenance error: db locked"
         );
     }
 }

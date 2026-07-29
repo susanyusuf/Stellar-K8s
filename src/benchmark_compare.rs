@@ -569,7 +569,44 @@ pub fn render_table(result: &ComparisonResult) -> String {
 }
 
 /// Render comparison as HTML
+///
+/// HTML rows for TPS and ledger-time metrics are built inline here.
 pub fn render_html(result: &ComparisonResult) -> String {
+    // Build metric rows directly — avoids a single-use private helper function.
+    let mut rows = String::new();
+
+    if let (Some(a_tps), Some(b_tps)) = (
+        result.cluster_a_summary.get("tps"),
+        result.cluster_b_summary.get("tps"),
+    ) {
+        let diff = ((a_tps.mean - b_tps.mean) / b_tps.mean * 100.0).abs();
+        let winner = if a_tps.mean > b_tps.mean {
+            &result.cluster_a_label
+        } else {
+            &result.cluster_b_label
+        };
+        rows.push_str(&format!(
+            "<tr><td>TPS (mean)</td><td>{:.2}</td><td>{:.2}</td><td>{:.1}%</td><td class=\"winner\">{}</td></tr>\n",
+            a_tps.mean, b_tps.mean, diff, winner
+        ));
+    }
+
+    if let (Some(a_lt), Some(b_lt)) = (
+        result.cluster_a_summary.get("ledger_time"),
+        result.cluster_b_summary.get("ledger_time"),
+    ) {
+        let diff = ((a_lt.mean - b_lt.mean) / b_lt.mean * 100.0).abs();
+        let winner = if a_lt.mean < b_lt.mean {
+            &result.cluster_a_label
+        } else {
+            &result.cluster_b_label
+        };
+        rows.push_str(&format!(
+            "<tr><td>Ledger Time (mean)</td><td>{:.2}s</td><td>{:.2}s</td><td>{:.1}%</td><td class=\"winner\">{}</td></tr>\n",
+            a_lt.mean, b_lt.mean, diff, winner
+        ));
+    }
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -618,52 +655,10 @@ pub fn render_html(result: &ComparisonResult) -> String {
         result.sample_count,
         result.cluster_a_label,
         result.cluster_b_label,
-        generate_html_rows(result),
+        rows,
         result.duration_secs,
         Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     )
-}
-
-fn generate_html_rows(result: &ComparisonResult) -> String {
-    let mut rows = String::new();
-
-    // TPS row
-    if let (Some(a_tps), Some(b_tps)) = (
-        result.cluster_a_summary.get("tps"),
-        result.cluster_b_summary.get("tps"),
-    ) {
-        let diff = ((a_tps.mean - b_tps.mean) / b_tps.mean * 100.0).abs();
-        let winner = if a_tps.mean > b_tps.mean {
-            &result.cluster_a_label
-        } else {
-            &result.cluster_b_label
-        };
-
-        rows.push_str(&format!(
-            "<tr><td>TPS (mean)</td><td>{:.2}</td><td>{:.2}</td><td>{:.1}%</td><td class=\"winner\">{}</td></tr>\n",
-            a_tps.mean, b_tps.mean, diff, winner
-        ));
-    }
-
-    // Ledger time row
-    if let (Some(a_lt), Some(b_lt)) = (
-        result.cluster_a_summary.get("ledger_time"),
-        result.cluster_b_summary.get("ledger_time"),
-    ) {
-        let diff = ((a_lt.mean - b_lt.mean) / b_lt.mean * 100.0).abs();
-        let winner = if a_lt.mean < b_lt.mean {
-            &result.cluster_a_label
-        } else {
-            &result.cluster_b_label
-        };
-
-        rows.push_str(&format!(
-            "<tr><td>Ledger Time (mean)</td><td>{:.2}s</td><td>{:.2}s</td><td>{:.1}%</td><td class=\"winner\">{}</td></tr>\n",
-            a_lt.mean, b_lt.mean, diff, winner
-        ));
-    }
-
-    rows
 }
 
 /// Export comparison to file
